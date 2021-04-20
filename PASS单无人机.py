@@ -861,7 +861,7 @@ def show_block_and_uav(i,uav):
         unit_from_neighbour_module_pix = transform_lst(uav.neibour_unit_pos)
         for (x, y) in unit_from_neighbour_module_pix:
             pygame.draw.circle(screen, THECOLORS['yellow'],
-                               [x + 0.5 * CELL_WIDTH, y + 0.5 * CELL_HEIGHT], 3, 0)
+                               [int(x + 0.5 * CELL_WIDTH), int(y + 0.5 * CELL_HEIGHT)], 3, 0)
     #绘制航迹
     if i!=0:
         TRAJECTORY.append(uav.pos)
