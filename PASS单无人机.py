@@ -855,7 +855,7 @@ def show_block_and_uav(i,uav):
     screen.blit(imgRect, (uav.pos[0] * CELL_WIDTH, uav.pos[1] * CELL_HEIGHT))
     #无人机模块中心点绘制
     pygame.draw.circle(screen, THECOLORS['red'],
-                       [(uav.module_center[0] + 0.5) * CELL_WIDTH, (uav.module_center[1] + 0.5) * CELL_HEIGHT], 3, 0)
+                       [int(uav.module_center[0] + 0.5) * CELL_WIDTH,int(uav.module_center[1] + 0.5) * CELL_HEIGHT], 3, 0)
     # 测试模式下绘制出无人机的搜索半径
     if uav.test_mode:
         unit_from_neighbour_module_pix = transform_lst(uav.neibour_unit_pos)
