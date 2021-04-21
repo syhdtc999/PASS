@@ -1,17 +1,17 @@
 import pygame
 from pygame.color import THECOLORS
 from random import randint
-import numpy as np
-import matplotlib.pyplot as plt
+import random
+import threading
+
 #地图大小
 MAPSIZE=(9,9)
-assert MAPSIZE[0]==MAPSIZE[1]
 #障碍物总数
-BLOCK_NUM=23
+BLOCK_NUM=0
 #三种不同范围的权重
-WEIGHT1 = 0.05
-WEIGHT2 = 0.7
-WEIGHT3 = 0.25
+WEIGHT1 = 0.5
+WEIGHT2 = 0.4
+WEIGHT3 = 0.1
 #单元格宽度/高度/边界宽度
 CELL_WIDTH=25
 CELL_HEIGHT = 25
@@ -22,6 +22,12 @@ COLOR_TH2= [188, 194, 215]
 COLOR_TH3= [136, 149, 177]
 COLOR_TH4= [84, 108, 140]
 COLOR_TH5= [25, 69, 104]
+#无人机数量
+UAV_NUM=2
+#是否冲突标志位
+CONFLICT_FLAG=0
+#所有无人机期望的模块中心点列表
+DECISIONS=[]
 
 #生成障碍物的函数，返回障碍物威胁等级的字典
 def gen_blocks():
@@ -58,16 +64,22 @@ def gen_blocks():
     for i in range(MAPSIZE[0]//3):
         for j in range(MAPSIZE[1]//3-i):
             realblocklist.append((MAPSIZE[0]-1-i+1,MAPSIZE[1]-1-j+1))
-    realblocklist.append((9,1))
-    realblocklist.append((9,2))
-    realblocklist.append((9,3))
-    realblocklist.append((8,3))
+
+    #指定这些实打实的障碍的威胁等级是5
+    for (x,y) in realblocklist:
+        blocklistdic[(x,y)]=5
+
+    realblocklist.append((5,3))
+    realblocklist.append((6,2))
     realblocklist.append((7,3))
-    realblocklist.append((7,4))
+    realblocklist.append((8,4))
     realblocklist.append((7,5))
-    # realblocklist.append()
-    realblocklist.append((9,5))
-    realblocklist.append((7,4))
+    realblocklist.append((6,6))
+    realblocklist.append((5,5))
+    realblocklist.append((4,4))
+    # # realblocklist.append()
+    # realblocklist.append((9,5))
+    # realblocklist.append((7,4))
 
     #指定这些实打实的障碍的威胁等级是5
     for (x,y) in realblocklist:
@@ -75,36 +87,18 @@ def gen_blocks():
 
     i=0
     #在此之后，在障碍物列表里面额外再加BLOCK_NUM个障碍
-    # while(i < BLOCK_NUM):
-    #     block = (randint(1, MAPSIZE[0]), randint(1,MAPSIZE[1]))
-    #     if block not in extra_blocklist and block not in realblocklist:
-    #         extra_blocklist.append(block)
-    #         i+=1
-    #
-    # #随机指定后加的BLOCK_NUM个障碍的威胁等级
-    # for (x,y) in extra_blocklist:
-    #     th=randint(1,5)
-    #     blocklistdic[(x,y)]=th
+    while(i < BLOCK_NUM):
+        block = (randint(1, MAPSIZE[0]), randint(1,MAPSIZE[1]))
+        if block not in extra_blocklist and block not in realblocklist:
+            extra_blocklist.append(block)
+            i+=1
+
+    #随机指定后加的BLOCK_NUM个障碍的威胁等级
+    for (x,y) in extra_blocklist:
+        th=randint(1,5)
+        blocklistdic[(x,y)]=th
 
     return blocklistdic
-#地图类
-class Map(object):
-    def __init__(self, map_pixsize):
-        self.map_pixsize = map_pixsize
-    def generate_cell(self):
-        '''
-        定义一个生成器，用来生成地图中的所有节点坐标
-        :param cell_width: 节点宽度
-        :param cell_height: 节点长度
-        :return: 返回地图中的节点
-        '''
-        x_cell = -CELL_WIDTH
-        for num_x in range(self.map_pixsize[0] // CELL_WIDTH):
-            y_cell = -CELL_HEIGHT
-            x_cell += CELL_WIDTH
-            for num_y in range(self.map_pixsize[1] // CELL_HEIGHT):
-                y_cell += CELL_HEIGHT
-                yield (x_cell, y_cell)
 
 #该函数把障碍物威胁等级的字典转换为对应威胁程度的字典
 def  transform_dic_to_thdic(blocklistdic):
@@ -136,6 +130,25 @@ def transform_lst_point(lst):
         result_pix_lst.append((x*CELL_WIDTH+0.5*CELL_WIDTH,y*CELL_HEIGHT+0.5*CELL_HEIGHT))
     return result_pix_lst
 
+#地图类
+class Map(object):
+    def __init__(self, map_pixsize):
+        self.map_pixsize = map_pixsize
+    def generate_cell(self):
+        '''
+        定义一个生成器，用来生成地图中的所有节点坐标
+        :param cell_width: 节点宽度
+        :param cell_height: 节点长度
+        :return: 返回地图中的节点
+        '''
+        x_cell = -CELL_WIDTH
+        for num_x in range(self.map_pixsize[0] // CELL_WIDTH):
+            y_cell = -CELL_HEIGHT
+            x_cell += CELL_WIDTH
+            for num_y in range(self.map_pixsize[1] // CELL_HEIGHT):
+                y_cell += CELL_HEIGHT
+                yield (x_cell, y_cell)
+
 class UAV(object):
     #无人机的初始化程序
     def __init__(self,ID,pos,test_mode=False):
@@ -144,7 +157,7 @@ class UAV(object):
         #无人机所在位置坐标
         self.pos = pos
         #无人机图片
-        self.pic_path='uav'+str(ID)+'.jpg'
+        self.pic_path='uav'+str(ID)+'.png'
         #无人机的飞行方向，默认向上
         self.orientation=(0,-1)
         #无人机飞行方向与邻居模块位置关系的字典
@@ -156,11 +169,8 @@ class UAV(object):
         self.neibour_unit_pos=self.get_unit_from_neighbour_module()
         #默认工作模式，0为睡眠模式
         self.mode=1
-        count=0
         #无人机剩余电量
-        for i in range(1,1+MAPSIZE[0]//3):
-            count+=i
-        self.battery=MAPSIZE[0]*MAPSIZE[1]-4*count
+        self.battery=999999
         #无人机的飞行总路程
         self.distance=0
         #无人机所处的步数
@@ -173,16 +183,16 @@ class UAV(object):
         self.black_box=[current_state]
         #无人机的历史飞行状态记录器，与黑匣子的区别仅在于,它是可以修改的，在决定退回时会用到
         self.history_states=self.black_box.copy()
-        if ID==1:
-            color='橙'
-        elif ID==2:
-            color='黄'
-        elif ID==3:
-            color='绿'
-        elif ID==4:
-            color='棕'
+        # if ID==1:
+        #     color='橙'
+        # elif ID==2:
+        #     color='黄'
+        # elif ID==3:
+        #     color='绿'
+        # elif ID==4:
+        #     color='棕'
         self.test_mode=test_mode
-        print('无人机' + str(self.ID) + '初始化成功! 初始位置' + str(self.pos) +' 颜色:'+color)
+        print('无人机' + str(self.ID) + '初始化成功! 初始位置' + str(self.pos))
         assert self.step==0
         print('step：'+str(self.step)+' 航拍结果:'+str(self.photo))
 
@@ -629,6 +639,143 @@ class UAV(object):
         else:
             return (0,None)
 
+    def make_decision_before_fly(self):
+        #飞之前先获取拍卖结果，以决定可能的未来飞行方向
+        auction_result=list(self.auction().items())
+        #将拍卖结果按照拍卖价格降序，考虑了飞行方向
+        if self.orientation == (0, -1):
+            num_dic = {1: 1, 2: 2, 4: 3, 3: 4}
+            auction_result.sort(key=lambda x: num_dic[x[0]])
+            auction_result.sort(key=lambda x: x[1], reverse=True)
+        elif self.orientation == (1, 0):
+            num_dic = {2: 1, 1: 2, 3: 3, 4: 4}
+            auction_result.sort(key=lambda x: num_dic[x[0]])
+            auction_result.sort(key=lambda x: x[1], reverse=True)
+        elif self.orientation == (-1, 0):
+            num_dic = {4: 1, 1: 2, 3: 3, 2: 4}
+            auction_result.sort(key=lambda x: num_dic[x[0]])
+            auction_result.sort(key=lambda x: x[1], reverse=True)
+        else:
+            num_dic = {3: 1, 2: 2, 4: 3, 1: 4}
+            auction_result.sort(key=lambda x: num_dic[x[0]])
+            auction_result.sort(key=lambda x: x[1], reverse=True)
+        assert self.orientation in [(0,-1),(-1,0),(0,1),(1,0)]
+        print('无人机'+str(self.ID)+'拍卖结果：')
+        for module_number,value in auction_result:
+            print(str(module_number)+'号模块:'+str(value))
+        flag=0
+        #最多试四次,看看能不能起飞
+        for i in range(4):
+            #获得可能的未来飞行方向，这里用自带的字典索引了一下飞行的方向
+            orientation=self.orientation_dic[auction_result[i][0]]
+            num_can_fly=self.straight_num_can_fly(orientation)
+            #如果可以直飞三个格子
+            if num_can_fly==3:
+                target_pos = (self.pos[0] + 3 * orientation[0], self.pos[1] + 3 * orientation[1])
+                target_module_center=self.calc_module_center(pos_new=target_pos,orientation_new=orientation)
+                decision=(self.ID,"直飞",target_module_center,i+1)
+                #准许起飞
+                flag=1
+            #如果可以直飞两个格子
+            if num_can_fly==2:
+                target_pos=(self.pos[0] + 2*orientation[0], self.pos[1] + 2*orientation[1])
+                target_module_center=self.calc_module_center(pos_new=target_pos,orientation_new=orientation)
+                decision=(self.ID,"直飞",target_module_center,i+1)
+                #准许起飞
+                flag=1
+            #如果可以直飞一个格子，此时一定飞到了不同的模块中
+            elif num_can_fly==1:
+                target_pos=(self.pos[0] + orientation[0], self.pos[1] + orientation[1])
+                target_module_center=self.calc_module_center(pos_new=target_pos,orientation_new=orientation)
+                decision=(self.ID,"直飞",target_module_center,i+1)
+                #准许起飞
+                flag=1
+            #如果一个能直飞的格子都没有的话，再考虑一下转弯的情形
+            elif num_can_fly==0:
+                #如果说转弯可以飞的话
+                if self.turn_num_can_fly(orientation)[0]>0:
+                    target_pos=self.turn_num_can_fly(orientation)[1]
+                    target_module_center = self.calc_module_center(pos_new=target_pos, orientation_new=orientation)
+                    decision = (self.ID, "拐弯", target_module_center, i + 1)
+                    flag=1
+                #转弯也飞不了的话，换个模块再试试
+                else:
+                    pass
+            #一旦准许起飞，跳出循环
+            if flag==1:
+                break
+        #尝试完四个方向，连一个可以飞的模块都没有，如果不是初始化时就这样，则决定退回
+        if flag==0:
+            #初始化的时候就四面有障碍的情形，无人机决定睡眠
+            if self.step==0:
+                target_module_center=self.module_center
+                decision =(self.ID,"睡眠",target_module_center,0)
+            #无人机决定退回
+            else:
+                target_module_center=self.history_states[-2][2]
+                decision=(self.ID,"退回",target_module_center,5)
+        global DECISIONS
+        DECISIONS.append(decision)
+
+    def straight_show(self,orientation, num_can_fly):
+        if num_can_fly!=0:
+            if orientation == (0, 1):
+                print("向↓飞" + str(num_can_fly) + "格")
+            elif orientation == (1, 0):
+                print("向→飞" + str(num_can_fly) + "格")
+            elif orientation == (-1, 0):
+                print("向←飞" + str(num_can_fly) + "格")
+            else:
+                print("向↑飞" + str(num_can_fly) + "格")
+        else:
+            if orientation==(1,0):
+                print('→堵住了，考虑拐弯')
+            elif orientation==(-1,0):
+                print('←堵住了，考虑拐弯')
+            elif orientation==(0,-1):
+                print('↑堵住了，考虑拐弯')
+            else:
+                print('↓堵住了，考虑拐弯')
+
+    def change_properities(self,orientation, num_can_fly, turn=False):
+        if turn == False:
+            # 不转弯的话，所在位置的更新
+            self.pos = (self.pos[0] + num_can_fly * orientation[0], self.pos[1] + num_can_fly * orientation[1])
+        else:
+            # 转弯的话，会在函数调用之前手动更新位置
+            pass
+        # 更新飞行方向
+        self.orientation = orientation
+        # 无人机之前所在的模块中所有的单元格会变成障碍物，更新两个与障碍物相关的字典，这件事要在无人机所在模块中心点坐标更新之前做
+        # 改之前要声明全局变量
+        global BLOCKLISTDIC
+        global BLOCKLISTTHDIC
+        BLOCKLISTDIC[(self.module_center[0] - 0.5, self.module_center[1] - 0.5)] = 5
+        BLOCKLISTDIC[(self.module_center[0] + 0.5, self.module_center[1] - 0.5)] = 5
+        BLOCKLISTDIC[(self.module_center[0] - 0.5, self.module_center[1] + 0.5)] = 5
+        BLOCKLISTDIC[(self.module_center[0] + 0.5, self.module_center[1] + 0.5)] = 5
+        BLOCKLISTTHDIC = transform_dic_to_thdic(BLOCKLISTDIC)
+        # 更新所在模块中心点坐标
+        self.module_center = self.calc_module_center(self.pos, self.orientation)
+        # 记录当前所在模块的障碍物分布情况(有可能会超出范围)
+        self.photo = self.take_pohto()
+        # 更新邻居模块所含单元格位置
+        self.neibour_unit_pos = self.get_unit_from_neighbour_module()
+        # mode不变
+        self.mode = 1
+        # 飞行衰减的电量
+        self.battery -= num_can_fly
+        # 飞行总路程增加
+        self.distance += num_can_fly
+        # 所处的步数+1
+        self.step += 1
+        current_state = (self.pos, self.orientation, self.module_center, self.photo,
+                         self.neighbour_module_unit_dic, self.mode, self.battery, self.distance, self.step)
+        # 黑匣子的修改
+        self.black_box.append(current_state)
+        # 飞行状态记录器的修改
+        self.history_states = self.black_box.copy()
+
     #根据四个模块的投标结果决定下一步怎么飞
     def fly(self):
         #飞之前先获取拍卖结果，以决定可能的未来飞行方向
@@ -656,75 +803,7 @@ class UAV(object):
             print(str(module_number)+'号模块:'+str(value))
         #起飞许可标志位
         flag=0
-        def straight_show(orientation, num_can_fly):
-            if num_can_fly!=0:
-                if orientation == (0, 1):
-                    print("向↓飞" + str(num_can_fly) + "格")
-                elif orientation == (1, 0):
-                    print("向→飞" + str(num_can_fly) + "格")
-                elif orientation == (-1, 0):
-                    print("向←飞" + str(num_can_fly) + "格")
-                else:
-                    print("向↑飞" + str(num_can_fly) + "格")
-            else:
-                if orientation==(1,0):
-                    print('→堵住了，考虑拐弯')
-                elif orientation==(-1,0):
-                    print('←堵住了，考虑拐弯')
-                elif orientation==(0,-1):
-                    print('↑堵住了，考虑拐弯')
-                else:
-                    print('↓堵住了，考虑拐弯')
-        def change_properities(orientation,num_can_fly,turn=False):
-            if turn==False:
-                #不转弯的话，所在位置的更新
-                self.pos=(self.pos[0]+num_can_fly*orientation[0],self.pos[1]+num_can_fly*orientation[1])
-            else:
-                #转弯的话，会在函数调用之前手动更新位置
-                pass
-            #更新飞行方向
-            self.orientation=orientation
-            # 无人机之前所在的模块中所有的单元格会变成障碍物，更新两个与障碍物相关的字典，这件事要在无人机所在模块中心点坐标更新之前做
-            # 改之前要声明全局变量
-            global BLOCKLISTDIC
-            global BLOCKLISTTHDIC
-            if ((self.module_center[0]-0.5, self.module_center[1] - 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[(self.module_center[0]-0.5, self.module_center[1] - 0.5)]!=5:
-                BLOCKLISTDIC[(self.module_center[0]-0.5, self.module_center[1] - 0.5)]=4
-            else:
-                pass
-            if ((self.module_center[0]+0.5, self.module_center[1] - 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[(self.module_center[0]+0.5, self.module_center[1] - 0.5)]!=5:
-                BLOCKLISTDIC[(self.module_center[0]+0.5, self.module_center[1] - 0.5)]=4
-            else:
-                pass
-            if ((self.module_center[0]-0.5, self.module_center[1] + 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[(self.module_center[0]-0.5, self.module_center[1] +0.5)]!=5:
-                BLOCKLISTDIC[(self.module_center[0]-0.5, self.module_center[1] + 0.5)]=4
-            else:
-                pass
-            if ((self.module_center[0]+0.5, self.module_center[1] + 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[(self.module_center[0]+0.5, self.module_center[1]+0.5)]!=5:
-                BLOCKLISTDIC[(self.module_center[0]+0.5, self.module_center[1] +0.5)]=4
-            else:
-                pass
-            BLOCKLISTTHDIC = transform_dic_to_thdic(BLOCKLISTDIC)
-            # 更新所在模块中心点坐标
-            self.module_center = self.calc_module_center(self.pos, self.orientation)
-            # 记录当前所在模块的障碍物分布情况(有可能会超出范围)
-            self.photo = self.take_pohto()
-            # 更新邻居模块所含单元格位置
-            self.neibour_unit_pos = self.get_unit_from_neighbour_module()
-            # mode不变
-            self.mode = 1
-            #飞行衰减的电量
-            self.battery -= num_can_fly
-            # 飞行总路程增加
-            self.distance += num_can_fly
-            # 所处的步数+1
-            self.step += 1
-            current_state = (self.pos, self.orientation, self.module_center, self.photo,
-                             self.neighbour_module_unit_dic, self.mode, self.battery, self.distance, self.step)
-            # 黑匣子的修改
-            self.black_box.append(current_state)
-            # 飞行状态记录器的修改
-            self.history_states = self.black_box.copy()
+
         #最多试四次,看看能不能起飞
         for i in range(4):
             #获得可能的未来飞行方向，这里用自带的字典索引了一下飞行的方向
@@ -732,8 +811,8 @@ class UAV(object):
             num_can_fly=self.straight_num_can_fly(orientation)
             #如果可以直飞三个格子
             if num_can_fly==3:
-                straight_show(orientation,num_can_fly)
-                change_properities(orientation,num_can_fly)
+                self.straight_show(orientation,num_can_fly)
+                self.change_properities(orientation,num_can_fly)
                 #已经是下一步了
                 print()
                 print('step：' + str(self.step) + ' 航拍结果:' + str(self.photo))
@@ -741,8 +820,8 @@ class UAV(object):
                 flag=1
             #如果可以直飞两个格子
             if num_can_fly==2:
-                straight_show(orientation,num_can_fly)
-                change_properities(orientation,num_can_fly)
+                self.straight_show(orientation,num_can_fly)
+                self.change_properities(orientation,num_can_fly)
                 #已经是下一步了
                 print()
                 print('step：' + str(self.step) + ' 航拍结果:' + str(self.photo))
@@ -750,8 +829,8 @@ class UAV(object):
                 flag=1
             #如果可以直飞一个格子，此时一定飞到了不同的模块中
             elif num_can_fly==1:
-                straight_show(orientation,num_can_fly)
-                change_properities(orientation,num_can_fly)
+                self.straight_show(orientation,num_can_fly)
+                self.change_properities(orientation,num_can_fly)
                 #已经是下一步了
                 print()
                 print('step：' + str(self.step) + ' 航拍结果:' + str(self.photo))
@@ -759,11 +838,11 @@ class UAV(object):
                 flag=1
             #如果一个能直飞的格子都没有的话，再考虑一下转弯的情形
             elif num_can_fly==0:
-                straight_show(orientation,num_can_fly)
+                self.straight_show(orientation,num_can_fly)
                 #如果说转弯可以飞的话
                 if self.turn_num_can_fly(orientation)[0]>0:
                     self.pos=self.turn_num_can_fly(orientation)[1]
-                    change_properities(orientation, num_can_fly,turn=True)
+                    self.change_properities(orientation, num_can_fly,turn=True)
                     print('转弯')
                     # 已经是下一步了
                     print()
@@ -793,26 +872,10 @@ class UAV(object):
                 print('无人机'+str(self.ID)+'退回')
                 #无人机当前所在的模块中所有的单元格会变成障碍物，更新两个与障碍物相关的字典，这件事要在无人机所在模块中心点坐标更新之前做
                 global BLOCKLISTDIC,BLOCKLISTTHDIC
-                if ((self.module_center[0] - 0.5, self.module_center[1] - 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[
-                    (self.module_center[0] - 0.5, self.module_center[1] - 0.5)] != 5:
-                    BLOCKLISTDIC[(self.module_center[0] - 0.5, self.module_center[1] - 0.5)] = 4
-                else:
-                    pass
-                if ((self.module_center[0] + 0.5, self.module_center[1] - 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[
-                    (self.module_center[0] + 0.5, self.module_center[1] - 0.5)] != 5:
-                    BLOCKLISTDIC[(self.module_center[0] + 0.5, self.module_center[1] - 0.5)] = 4
-                else:
-                    pass
-                if ((self.module_center[0] - 0.5, self.module_center[1] + 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[
-                    (self.module_center[0] - 0.5, self.module_center[1] + 0.5)] != 5:
-                    BLOCKLISTDIC[(self.module_center[0] - 0.5, self.module_center[1] + 0.5)] = 4
-                else:
-                    pass
-                if ((self.module_center[0] + 0.5, self.module_center[1] + 0.5) not in BLOCKLISTDIC) or BLOCKLISTDIC[
-                    (self.module_center[0] + 0.5, self.module_center[1] + 0.5)] != 5:
-                    BLOCKLISTDIC[(self.module_center[0] +0.5, self.module_center[1] +0.5)] = 4
-                else:
-                    pass
+                BLOCKLISTDIC[(self.module_center[0]-0.5,self.module_center[1]-0.5)]=5
+                BLOCKLISTDIC[(self.module_center[0]+0.5,self.module_center[1]-0.5)]=5
+                BLOCKLISTDIC[(self.module_center[0]-0.5,self.module_center[1]+0.5)]=5
+                BLOCKLISTDIC[(self.module_center[0]+0.5,self.module_center[1]+0.5)]=5
                 BLOCKLISTTHDIC=transform_dic_to_thdic(BLOCKLISTDIC)
                 #飞机自身的属性进行修改
                 num=abs(self.pos[0]-self.history_states[-2][0][0])+abs(self.pos[1]-self.history_states[-2][0][1])
@@ -839,8 +902,45 @@ class UAV(object):
                 print('step：' + str(self.step) + ' 航拍结果:' + str(self.photo))
                 return 300
 
-#该函数绘制障碍物和无人机位置、所在模块中心点、搜索半径、航迹，不会改变全局变量
-def show_block_and_uav(i,uav):
+#冲突判断函数
+def conflict():
+    global DECISIONS
+    #把所有的目标模块中心点取出来
+    target_module_centers=[]
+    for decision in DECISIONS:
+        target_module_centers.append(decision[2])
+    #把具有相同目标模块中心点的决定 单独拿出来进行冲突检测分析
+    same_target_dic = {}
+    for decision in DECISIONS:
+        if target_module_centers.count(decision[2])>=2:
+            same_target_dic[decision[2]]=[]
+    for decision in DECISIONS:
+        if target_module_centers.count(decision[2])>=2:
+            same_target_dic[decision[2]].append([decision[0],decision[1],decision[3]])
+    #做最终决定了，没有冲突的飞机保持原样
+    final_decisions_dic={}
+    for decision in DECISIONS:
+        if decision[2] not in same_target_dic:
+            final_decisions_dic[decision[0]]=decision[1:-1]
+    #产生冲突的飞机只能飞一架，其它的飞机的策略需要修改
+    for target_module_center in same_target_dic:
+        same_target_dic[target_module_center].sort(key=lambda x:eval('uav'+str(x[0])+'.distance'),reverse=False)
+        final_decisions_dic[same_target_dic[target_module_center][0][0]]=(same_target_dic[target_module_center][0][1],same_target_dic[target_module_center][0][2])
+        i=1
+        while i<len(same_target_dic[target_module_center]):
+            if same_target_dic[target_module_center][i][2]==1:
+                final_decisions_dic[same_target_dic[target_module_center][i][0]]=(None,2)
+            elif same_target_dic[target_module_center][i][2]==2:
+                final_decisions_dic[same_target_dic[target_module_center][i][0]]=(None,3)
+            elif same_target_dic[target_module_center][i][2]==3:
+                final_decisions_dic[same_target_dic[target_module_center][i][0]]=(None,4)
+            elif same_target_dic[target_module_center][i][2]==4:
+                final_decisions_dic[same_target_dic[target_module_center][i][0]]=(None,5)
+            i+=1
+    return final_decisions_dic
+
+#该函数绘制障碍物和多无人机位置、所在模块中心点、搜索半径、航迹，不会改变全局变量
+def show_block_and_uavs(i,uavs):
     pygame.display.set_caption('PASS算法演示，第' + str(i) + '步')
     # 障碍物的像素坐标
     blocklistdic_pix = {}
@@ -882,52 +982,27 @@ def show_block_and_uav(i,uav):
                 REACHABLELIST.append((x // CELL_WIDTH, y // CELL_HEIGHT))
             pygame.draw.rect(screen, THECOLORS['white'], (
                 (x + BORDER_WIDTH, y + BORDER_WIDTH), (CELL_WIDTH - 2 * BORDER_WIDTH, CELL_HEIGHT - 2 * BORDER_WIDTH)))
-    #加载无人机图标
-    imgRect = pygame.image.load(uav.pic_path)
-    screen.blit(imgRect, (uav.pos[0] * CELL_WIDTH, uav.pos[1] * CELL_HEIGHT))
-    #无人机模块中心点绘制
-    pygame.draw.circle(screen, THECOLORS['red'],
-                       [(uav.module_center[0] + 0.5) * CELL_WIDTH, (uav.module_center[1] + 0.5) * CELL_HEIGHT], 3, 0)
-    # 测试模式下绘制出无人机的搜索半径
-    if uav.test_mode:
-        unit_from_neighbour_module_pix = transform_lst(uav.neibour_unit_pos)
-        for (x, y) in unit_from_neighbour_module_pix:
-            pygame.draw.circle(screen, THECOLORS['yellow'],
-                               [x + 0.5 * CELL_WIDTH, y + 0.5 * CELL_HEIGHT], 3, 0)
-    #绘制航迹
-    if i!=0:
-        TRAJECTORY.append(uav.pos)
-        pygame.draw.aalines(screen, THECOLORS['black'], False, transform_lst_point(TRAJECTORY))
-    pygame.display.flip()
+    for uav in uavs:
+        #加载无人机图标
+        imgRect = pygame.image.load(uav.pic_path)
+        screen.blit(imgRect, (uav.pos[0] * CELL_WIDTH, uav.pos[1] * CELL_HEIGHT))
+        #无人机模块中心点绘制
+        pygame.draw.circle(screen, THECOLORS['red'],
+                           [(uav.module_center[0] + 0.5) * CELL_WIDTH, (uav.module_center[1] + 0.5) * CELL_HEIGHT], 3, 0)
+        # 测试模式下绘制出无人机的搜索半径
+        if uav.test_mode:
+            unit_from_neighbour_module_pix = transform_lst(uav.neibour_unit_pos)
+            for (x, y) in unit_from_neighbour_module_pix:
+                pygame.draw.circle(screen, THECOLORS['yellow'],
+                                   [x + 0.5 * CELL_WIDTH, y + 0.5 * CELL_HEIGHT], 3, 0)
+        #绘制航迹
+        if i!=0:
+            TRAJECTORYS["uav"+str(uav.ID)].append(uav.pos)
+            pygame.draw.aalines(screen, THECOLORS['black'], False, transform_lst_point(TRAJECTORYS["uav"+str(uav.ID)]))
+        pygame.display.flip()
     #保存图片
     pygame.image.save(screen, "pass" + str(i) + ".jpg")
-    pygame.time.wait(1000)
-
-def debug_block_show():
-    #三角区
-    trangle_lists=[]
-    #生成四角三角形区域的实打实的障碍
-    #左上角
-    for i in range(MAPSIZE[0]//3):
-        for j in range(MAPSIZE[1]//3 - i):
-            trangle_lists.append((i+1, j+1))
-    #右上角
-    for i in range(MAPSIZE[0]//3):
-        for j in range(MAPSIZE[1]//3-i):
-            trangle_lists.append((MAPSIZE[0]-1-i+1,j+1))
-    #左下角
-    for i in range(MAPSIZE[0]//3):
-        for j in range(MAPSIZE[1]//3-i):
-            trangle_lists.append((i+1,MAPSIZE[1]-1-j+1))
-    #右下角
-    for i in range(MAPSIZE[0]//3):
-        for j in range(MAPSIZE[1]//3-i):
-            trangle_lists.append((MAPSIZE[0]-1-i+1,MAPSIZE[1]-1-j+1))
-    debug_block_list=[]
-    for block in BLOCKLISTTHDIC:
-        if MAPSIZE[0]>=block[0]>=1 and 1<=block[1]<=MAPSIZE[1] and block not in trangle_lists:
-            debug_block_list.append(block)
-    return debug_block_list
+    pygame.time.wait(2000)
 
 if __name__=='__main__':
     #地图初始化
@@ -939,61 +1014,162 @@ if __name__=='__main__':
     BLOCKLISTTHDIC = transform_dic_to_thdic(BLOCKLISTDIC)
     print('BLOCKLISTTHDIC:', BLOCKLISTTHDIC)
     print()
-    #uav初始化
     reachablelist=[]
     for i in m.generate_cell():
         if (i[0]//CELL_WIDTH,i[1]//CELL_HEIGHT) not in BLOCKLISTDIC:
             reachablelist.append((i[0]//CELL_WIDTH,i[1]//CELL_HEIGHT))
     assert len(reachablelist)==(MAPSIZE[0]+2)*(MAPSIZE[1]+2)-len(BLOCKLISTTHDIC)
-    random_index_list = np.random.randint(low=0, high=len(reachablelist), size=1)
-    INIT_POS = reachablelist[random_index_list[0]]
-    uav=UAV(1,(8,4),True)
-    # print(debug_block_show())
-    # uav=UAV(1,(1,1),True)
-    # uav=UAV(1,MAPSIZE,True)
-    # uav=UAV(1,(20,10),True)
-    # uav=UAV(1,(MAPSIZE[0],1),True)
+
+    #多架uav初始化
+    reachablelist_init1=[]
+    for item in reachablelist:
+        if item[0]==1:
+            reachablelist_init1.append(item)
+    random_index_list1 = random.sample(range(0,len(reachablelist_init1)),3)
+    INIT_POS1 = reachablelist_init1[random_index_list1[0]]
+    INIT_POS2 = reachablelist_init1[random_index_list1[1]]
+    print(random_index_list1)
+    INIT_POS3 = reachablelist_init1[random_index_list1[2]]
+    uav1=UAV(1,[6,3],)
+    uav2=UAV(2,[5,4],)
+    uav3=UAV(3,[6,5],)
+
+    reachablelist_init2=[]
+    for item in reachablelist:
+        if item[0]==MAPSIZE[0]:
+            reachablelist_init2.append(item)
+    random_index_list2 = random.sample(range(0,len(reachablelist_init2)),3)
+    INIT_POS4 = reachablelist_init2[random_index_list2[0]]
+    INIT_POS5 = reachablelist_init2[random_index_list2[1]]
+    INIT_POS6 = reachablelist_init2[random_index_list2[2]]
+    uav4=UAV(4,[7,4],)
+    # uav5=UAV(5,INIT_POS5,)
+    # uav6=UAV(6,INIT_POS6,)
+
+    reachablelist_init3=[]
+    for item in reachablelist:
+        if item[1]==1:
+            reachablelist_init3.append(item)
+    random_index_list3 = random.sample(range(0,len(reachablelist_init3)),3)
+    INIT_POS7 = reachablelist_init3[random_index_list3[0]]
+    INIT_POS8 = reachablelist_init3[random_index_list3[1]]
+    INIT_POS9 = reachablelist_init3[random_index_list3[2]]
+    # uav7=UAV(7,INIT_POS7,)
+    # uav8=UAV(8,INIT_POS8,)
+    # uav9=UAV(9,INIT_POS9,)
+
+    reachablelist_init4=[]
+    for item in reachablelist:
+        if item[1]==MAPSIZE[1]:
+            reachablelist_init4.append(item)
+    random_index_list4 = random.sample(range(0,len(reachablelist_init3)),3)
+    INIT_POS10 = reachablelist_init4[random_index_list4[0]]
+    INIT_POS11 = reachablelist_init4[random_index_list4[1]]
+    INIT_POS12 = reachablelist_init4[random_index_list4[2]]
+    # uav10=UAV(10,INIT_POS10,)
+    # uav11=UAV(11,INIT_POS11,)
+    # uav12=UAV(12,INIT_POS12,)
+    #多无人机列表
+    uavs=[uav1,uav2,uav3,uav4]
     #pygame初始化
     pygame.init()
     screen = pygame.display.set_mode(m.map_pixsize)
     screen.fill([192, 192, 192])
-    #显示障碍物和无人机相关
-    show_block_and_uav(0,uav)
-    #航迹初始化
-    TRAJECTORY=[(8,4)]
-    count=0
-    for i in range(1,MAPSIZE[0]//3+1):
-        count+=i
-    denominator=MAPSIZE[0]*MAPSIZE[1]-4*count
-    assert denominator==81-4*6
-    # uav.fly()
-    # show_block_and_uav(1,uav)
-    # print("1=",TRAJECTORY)
-    # print(debug_block_show())
+    #显示障碍物和多无人机相关
+    show_block_and_uavs(0,uavs)
+    #多无人机航迹初始化
+    TRAJECTORYS={'uav1':[INIT_POS1],'uav2':[INIT_POS2],'uav3':[INIT_POS3],'uav4':[INIT_POS4]}
+
+    for uav in uavs:
+        print(uav.make_decision_before_fly())
+    uav1_make_decision_thread=threading.Thread(target=uav1.make_decision_before_fly)
+    uav2_make_decision_thread=threading.Thread(target=uav2.make_decision_before_fly)
+    uav3_make_decision_thread=threading.Thread(target=uav3.make_decision_before_fly)
+    uav4_make_decision_thread=threading.Thread(target=uav4.make_decision_before_fly)
+    uav1_make_decision_thread.start()
+    uav2_make_decision_thread.start()
+    uav3_make_decision_thread.start()
+    uav4_make_decision_thread.start()
+    threads = [uav1_make_decision_thread,uav2_make_decision_thread,uav3_make_decision_thread,uav4_make_decision_thread]
+    for t in threads:
+        t.join()
+    print(DECISIONS)
+    # uav1_fly_thread.start()
+    # uav2_fly_thread.start()
+    # uav3_fly_thread.start()
+    # uav4_fly_thread.start()
+    # for i in range(1,501):
+    #     uav1_fly_thread=threading.Thread(target=uav1.fly)
+    #     uav2_fly_thread=threading.Thread(target=uav2.fly)
+    #     uav3_fly_thread=threading.Thread(target=uav3.fly)
+    #     uav4_fly_thread=threading.Thread(target=uav4.fly)
+    #     uav5_fly_thread = threading.Thread(target=uav5.fly)
+    #     uav6_fly_thread = threading.Thread(target=uav6.fly)
+    #     uav7_fly_thread = threading.Thread(target=uav7.fly)
+    #     uav8_fly_thread=threading.Thread(target=uav8.fly)
+    #     uav9_fly_thread=threading.Thread(target=uav9.fly)
+    #     uav10_fly_thread=threading.Thread(target=uav10.fly)
+    #     uav11_fly_thread=threading.Thread(target=uav11.fly)
+    #     uav12_fly_thread=threading.Thread(target=uav12.fly)
+    #     threads=[uav1_fly_thread,uav2_fly_thread,uav3_fly_thread,uav4_fly_thread,uav5_fly_thread,uav6_fly_thread,uav7_fly_thread,uav8_fly_thread,
+    #              uav10_fly_thread,uav11_fly_thread,uav12_fly_thread,uav9_fly_thread,]
+    #     uav1_fly_thread.start()
+    #     uav2_fly_thread.start()
+    #     uav3_fly_thread.start()
+    #     uav4_fly_thread.start()
+    #     uav5_fly_thread.start()
+    #     uav6_fly_thread.start()
+    #     uav7_fly_thread.start()
+    #     uav8_fly_thread.start()
+    #     uav9_fly_thread.start()
+    #     uav10_fly_thread.start()
+    #     uav12_fly_thread.start()
+    #     uav11_fly_thread.start()
+    #     for t in threads:
+    #         t.join()
+    #     TRAJECTORYS['uav1'].append(uav1.pos)
+    #     TRAJECTORYS['uav2'].append(uav2.pos)
+    #     TRAJECTORYS['uav3'].append(uav3.pos)
+    #     TRAJECTORYS['uav4'].append(uav4.pos)
+    #     TRAJECTORYS['uav5'].append(uav5.pos)
+    #     TRAJECTORYS['uav6'].append(uav6.pos)
+    #     TRAJECTORYS['uav7'].append(uav7.pos)
+    #     TRAJECTORYS['uav8'].append(uav8.pos)
+    #     TRAJECTORYS['uav9'].append(uav9.pos)
+    #     TRAJECTORYS['uav10'].append(uav10.pos)
+    #     TRAJECTORYS['uav11'].append(uav11.pos)
+    #     TRAJECTORYS['uav12'].append(uav12.pos)
     #
-    # uav.fly()
-    # show_block_and_uav(2,uav)
-    # print("2=",TRAJECTORY)
-    # print(debug_block_show())
-    #
-    # uav.fly()
-    # show_block_and_uav(3,uav)
-    # print("3=",TRAJECTORY)
-    # print(debug_block_show())
-    #
-    # uav.fly()
-    # show_block_and_uav(4,uav)
-    # print("4=",TRAJECTORY)
-    # print(debug_block_show())
-    #飞和显示
-    for i in range(1,30):
-        uav.fly()
-        assert i==uav.step
-        print(str(i)+"=", TRAJECTORY)
-        show_block_and_uav(i,uav)
+    #     show_block_and_uavs(i, uavs)
+    #飞和显示(该飞的飞，该退的退，最后显示一下)
+    # for i in range(1,1000):
+    #     #所有的无人机都先飞一格
+    #     for uav in uavs:
+    #         uav.fly()
+    #         #航迹先加上去
+    #         TRAJECTORYS['uav'+str(uav.ID)].append(uav.pos)
+    #     #如果出现了多架无人机位于同一模块的情形，则修改冲突标志位CONFLICT_FLAG为1
+    #     #同时返回的总路程多的无人机ID列表
+    #     if conflict():
+    #         CONFLICT_FLAG=1
+    #         conflict_ID_list=conflict()
+    #         #把冲突飞机的航迹给扣除了
+    #         for id in conflict_ID_list:
+    #             TRAJECTORYS['uav'+str(id)].pop()
+    #     #冲突的无人机会退回，其它无人机不动
+    #     if CONFLICT_FLAG==1:
+    #         for uav in uavs:
+    #             if uav.ID in conflict_ID_list:
+    #                 uav.back()
+    #                 #把退回的航迹加上去
+    #                 TRAJECTORYS['uav' + str(uav.ID)].append(uav.pos)
+    #     #冲突标志位改回0
+    #     CONFLICT_FLAG=0
+    #     #显示
+    #     show_block_and_uavs(i,uavs)
     # mRunning = True
     # while mRunning:
     #     for event in pygame.event.get():
     #         if event.type == pygame.QUIT:
     #             mRunning = False
-    pygame.quit()
+    # pygame.quit()
